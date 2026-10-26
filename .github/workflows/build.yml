@@ -1,0 +1,381 @@
+name: Build fwjz VIP Menu UI
+
+on:
+  workflow_dispatch:
+  push:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Create Source Code
+        run: |
+          cat << 'EOF' > fwjz.m
+          #import <UIKit/UIKit.h>
+          #import <QuartzCore/QuartzCore.h>
+          #import <mach/mach.h>
+          #import <mach/mach_vm.h>     // <--- THÊM DÒNG NÀY ĐỂ FIX LỖI
+          #import <mach-o/dyld.h>      
+          #import <dlfcn.h>
+
+          @interface FWJZMenuUI : NSObject <UITextFieldDelegate>
+          @property (nonatomic, strong) UIWindow *overlayWindow;
+          @property (nonatomic, strong) UIWindow *menuWindow;
+          @property (nonatomic, strong) UIView *menuContainer;
+          @property (nonatomic, strong) UILabel *statusLabel;
+          @property (nonatomic, strong) UIButton *floatingBtn;
+          @property (nonatomic, strong) CADisplayLink *displayLink;
+          @property (nonatomic, assign) NSInteger frameCount;
+          @property (nonatomic, assign) CFTimeInterval lastTime;
+          @property (nonatomic, strong) NSString *adminTag;
+          @property (nonatomic, assign) BOOL streamMode;
+          @property (nonatomic, assign) BOOL showBar;
+          @property (nonatomic, assign) uint64_t baseAddr;
+          
+          + (instancetype)shared;
+          - (void)setup;
+          @end
+
+          @implementation FWJZMenuUI
+
+          + (instancetype)shared {
+              static FWJZMenuUI *inst = nil;
+              static dispatch_once_t onceToken;
+              dispatch_once(&onceToken, ^{ inst = [[FWJZMenuUI alloc] init]; });
+              return inst;
+          }
+
+          - (uint64_t)getBaseAddress:(const char *)moduleName {
+              uint32_t count = _dyld_image_count();
+              for (uint32_t i = 0; i < count; i++) {
+                  const char *name = _dyld_get_image_name(i);
+                  if (strstr(name, moduleName)) {
+                      return (uint64_t)_dyld_get_image_header(i);
+                  }
+              }
+              return 0;
+          }
+
+          - (void)patchMemoryAt:(uint64_t)offset hexBytes:(NSString *)hexStr {
+              if (self.baseAddr == 0) return;
+              uint64_t targetAddr = self.baseAddr + offset;
+              
+              NSMutableData *data = [NSMutableData data];
+              for (int i = 0; i < hexStr.length; i += 2) {
+                  NSString *sub = [hexStr substringWithRange:NSMakeRange(i, 2)];
+                  unsigned int byteVal;
+                  [[NSScanner scannerWithString:sub] scanHexInt:&byteVal];
+                  uint8_t b = (uint8_t)byteVal;
+                  [data appendBytes:&b length:1];
+              }
+              
+              task_t task;
+              if (task_for_pid(mach_task_self(), getpid(), &task) != KERN_SUCCESS) return;
+              
+              // Sử dụng VM_PROT_DEFAULT | VM_PROT_COPY thay vì VM_PROT_COPY đơn thuần
+              mach_vm_protect(task, targetAddr & ~0xFFF, 0x1000, FALSE, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY);
+              mach_vm_write(task, targetAddr, (vm_offset_t)data.bytes, (mach_msg_type_number_t)data.length);
+              mach_vm_protect(task, targetAddr & ~0xFFF, 0x1000, FALSE, VM_PROT_READ | VM_PROT_EXECUTE);
+          }
+
+          - (void)toggleCamXa:(UISwitch *)sw {
+              if (sw.on) {
+                  [self patchMemoryAt:0x554b9ec hexBytes:@"C0035FD6"];
+                  [self patchMemoryAt:0x5561e44 hexBytes:@"C0035FD6"];
+              } else {
+                  [self patchMemoryAt:0x554b9ec hexBytes:@"200080D2"];
+                  [self patchMemoryAt:0x5561e44 hexBytes:@"200080D2"];
+              }
+          }
+
+          - (void)toggleHienUnity:(UISwitch *)sw {
+              if (sw.on) {
+                  [self patchMemoryAt:0x5f1c2b4 hexBytes:@"1F2003D5"];
+                  [self patchMemoryAt:0x5f1c3ac hexBytes:@"330080D2"];
+              } else {
+                  [self patchMemoryAt:0x5f1c2b4 hexBytes:@"200080D2"]; 
+                  [self patchMemoryAt:0x5f1c3ac hexBytes:@"130080D2"];
+              }
+          }
+
+          - (void)toggleHienToCao:(UISwitch *)sw {
+              [self patchMemoryAt:0x5adf5a8 hexBytes:sw.on ? @"C0035FD6" : @"200080D2"];
+          }
+
+          - (void)toggleHienBoTro:(UISwitch *)sw {
+              [self patchMemoryAt:0x5fbe014 hexBytes:sw.on ? @"C0035FD6" : @"200080D2"];
+          }
+
+          - (void)toggleHackMap:(UISwitch *)sw {
+              [self patchMemoryAt:0x4A38174 hexBytes:sw.on ? @"1F2003D5" : @"200080D2"];
+          }
+
+          - (void)toggleBypassAC:(UISwitch *)sw {
+              if (sw.on) {
+                  [self patchMemoryAt:0x5A78334 hexBytes:@"C0035FD6"];
+                  [self patchMemoryAt:0x4BF89BC hexBytes:@"C0035FD6"];
+                  [self patchMemoryAt:0x4BF90A0 hexBytes:@"C0035FD6"];
+                  [self patchMemoryAt:0x47EDCA8 hexBytes:@"C0035FD6"];
+                  [self patchMemoryAt:0x78B6D70 hexBytes:@"C0035FD6"];
+                  [self patchMemoryAt:0x78B6D00 hexBytes:@"C0035FD6"];
+                  [self patchMemoryAt:0x5CC137C hexBytes:@"C0035FD6"];
+                  [self patchMemoryAt:0x4D9A320 hexBytes:@"C0035FD6"];
+                  [self patchMemoryAt:0x73B736C hexBytes:@"C0035FD6"];
+              } else {
+                  [self patchMemoryAt:0x5A78334 hexBytes:@"FD7BBCA9"];
+                  [self patchMemoryAt:0x4BF89BC hexBytes:@"FD7BBCA9"];
+                  [self patchMemoryAt:0x4BF90A0 hexBytes:@"FD7BBCA9"];
+                  [self patchMemoryAt:0x47EDCA8 hexBytes:@"FD7BBCA9"];
+                  [self patchMemoryAt:0x78B6D70 hexBytes:@"FD7BBCA9"];
+                  [self patchMemoryAt:0x78B6D00 hexBytes:@"FD7BBCA9"];
+                  [self patchMemoryAt:0x5CC137C hexBytes:@"000080D2"];
+                  [self patchMemoryAt:0x4D9A320 hexBytes:@"FD7BBCA9"];
+                  [self patchMemoryAt:0x73B736C hexBytes:@"FD7BBCA9"];
+              }
+          }
+
+          - (void)setup {
+              self.adminTag = @"fwjz";
+              self.streamMode = NO;
+              self.showBar = YES;
+              self.frameCount = 0;
+              self.lastTime = CACurrentMediaTime();
+
+              [UIDevice currentDevice].batteryMonitoringEnabled = YES;
+
+              self.baseAddr = [self getBaseAddress:"UnityFramework"]; 
+              if (self.baseAddr == 0) self.baseAddr = [self getBaseAddress:"libGameCore.so"];
+
+              self.overlayWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+              self.overlayWindow.windowLevel = UIWindowLevelAlert + 10.0;
+              self.overlayWindow.backgroundColor = [UIColor clearColor];
+              self.overlayWindow.userInteractionEnabled = YES;
+
+              UIViewController *rootVC = [[UIViewController alloc] init];
+              rootVC.view.backgroundColor = [UIColor clearColor];
+              self.overlayWindow.rootViewController = rootVC;
+
+              CGFloat screenW = [UIScreen mainScreen].bounds.size.width;
+              self.statusLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 10, screenW - 40, 24)];
+              self.statusLabel.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.4];
+              self.statusLabel.layer.cornerRadius = 6.0;
+              self.statusLabel.layer.masksToBounds = YES;
+              self.statusLabel.textAlignment = NSTextAlignmentCenter;
+              self.statusLabel.font = [UIFont boldSystemFontOfSize:11.5];
+              [rootVC.view addSubview:self.statusLabel];
+
+              self.floatingBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+              self.floatingBtn.frame = CGRectMake(25, 120, 50, 50);
+              self.floatingBtn.layer.cornerRadius = 25.0;
+              self.floatingBtn.layer.masksToBounds = YES;
+              self.floatingBtn.layer.borderWidth = 2.0;
+              self.floatingBtn.layer.borderColor = [UIColor cyanColor].CGColor;
+              self.floatingBtn.backgroundColor = [UIColor colorWithRed:0.1 green:0.1 blue:0.15 alpha:0.9];
+              [self.floatingBtn setTitle:@"⚡" forState:UIControlStateNormal];
+              self.floatingBtn.titleLabel.font = [UIFont boldSystemFontOfSize:22];
+
+              UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(onBtnPan:)];
+              [self.floatingBtn addGestureRecognizer:pan];
+              [self.floatingBtn addTarget:self action:@selector(toggleMenu) forControlEvents:UIControlEventTouchUpInside];
+              [rootVC.view addSubview:self.floatingBtn];
+
+              [self.overlayWindow makeKeyAndVisible];
+
+              [self buildMenuWindow];
+
+              [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(screenCaptureChanged) name:UIScreenCapturedDidChangeNotification object:nil];
+
+              self.displayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(onTick:)];
+              [self.displayLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+          }
+
+          - (void)onBtnPan:(UIPanGestureRecognizer *)p {
+              CGPoint tr = [p translationInView:nil];
+              self.floatingBtn.center = CGPointMake(self.floatingBtn.center.x + tr.x, self.floatingBtn.center.y + tr.y);
+              [p setTranslation:CGPointZero inView:nil];
+          }
+
+          - (void)onTick:(CADisplayLink *)l {
+              self.frameCount++;
+              CFTimeInterval now = CACurrentMediaTime();
+              if (now - self.lastTime >= 1.0) {
+                  NSInteger fps = (NSInteger)round(self.frameCount / (now - self.lastTime));
+                  self.frameCount = 0;
+                  self.lastTime = now;
+
+                  if (self.showBar) {
+                      NSDateFormatter *df = [[NSDateFormatter alloc] init];
+                      [df setLocale:[[NSLocale alloc] initWithLocaleIdentifier:@"vi_VN"]];
+                      [df setDateFormat:@"EEEE, dd/MM/yyyy HH:mm:ss"];
+                      NSString *dateStr = [df stringFromDate:[NSDate date]];
+                      float battery = [UIDevice currentDevice].batteryLevel * 100;
+                      if (battery < 0) battery = 100.0;
+
+                      NSMutableAttributedString *str = [[NSMutableAttributedString alloc] 
+                          initWithString:[NSString stringWithFormat:@"[%@] %ld FPS | %@ | Pin: %.0f%%", self.adminTag, (long)fps, dateStr, battery]];
+                      
+                      [str addAttribute:NSForegroundColorAttributeName value:[UIColor magentaColor] range:NSMakeRange(0, self.adminTag.length + 2)];
+                      self.statusLabel.attributedText = str;
+                  }
+              }
+          }
+
+          - (void)buildMenuWindow {
+              self.menuWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+              self.menuWindow.windowLevel = UIWindowLevelAlert + 20.0;
+              self.menuWindow.backgroundColor = [UIColor clearColor];
+
+              UIViewController *menuVC = [[UIViewController alloc] init];
+              menuVC.view.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.45];
+              self.menuWindow.rootViewController = menuVC;
+
+              CGFloat w = 310; CGFloat h = 560; 
+              CGFloat x = (self.menuWindow.bounds.size.width - w) / 2;
+              CGFloat y = (self.menuWindow.bounds.size.height - h) / 2;
+
+              self.menuContainer = [[UIView alloc] initWithFrame:CGRectMake(x, y, w, h)];
+              self.menuContainer.backgroundColor = [UIColor colorWithRed:0.08 green:0.08 blue:0.12 alpha:0.95];
+              self.menuContainer.layer.cornerRadius = 16.0;
+              self.menuContainer.layer.borderWidth = 1.5;
+              self.menuContainer.layer.borderColor = [UIColor cyanColor].CGColor;
+              self.menuContainer.layer.masksToBounds = YES;
+
+              UIBlurEffect *blur = [UIBlurEffect effectWithStyle:UIBlurEffectStyleDark];
+              UIVisualEffectView *blurView = [[UIVisualEffectView alloc] initWithEffect:blur];
+              blurView.frame = self.menuContainer.bounds;
+              [self.menuContainer addSubview:blurView];
+              [menuVC.view addSubview:self.menuContainer];
+
+              UIScrollView *scroll = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 40, w, h - 40)];
+              scroll.contentSize = CGSizeMake(w, 540);
+              scroll.showsVerticalScrollIndicator = NO;
+              [self.menuContainer addSubview:scroll];
+
+              UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 15, w, 22)];
+              title.text = @"⚡ FWJZ VIP MENU - FULL TOGGLE ⚡";
+              title.textColor = [UIColor whiteColor];
+              title.font = [UIFont boldSystemFontOfSize:14];
+              title.textAlignment = NSTextAlignmentCenter;
+              [self.menuContainer addSubview:title];
+
+              UITextField *tf = [[UITextField alloc] initWithFrame:CGRectMake(20, 0, w - 40, 36)];
+              tf.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.6];
+              tf.textColor = [UIColor cyanColor];
+              tf.layer.cornerRadius = 8.0;
+              tf.textAlignment = NSTextAlignmentCenter;
+              tf.text = self.adminTag;
+              tf.delegate = self;
+              [tf addTarget:self action:@selector(tagChanged:) forControlEvents:UIControlEventEditingChanged];
+              [scroll addSubview:tf];
+
+              [self addRow:scroll title:@"CAM XA (CAM HACK)" y:50 sel:@selector(toggleCamXa:) on:NO];
+              [self addRow:scroll title:@"HIỆN UNITY ĐỊCH" y:90 sel:@selector(toggleHienUnity:) on:NO];
+              [self addRow:scroll title:@"HIỆN TỐ CÁO" y:130 sel:@selector(toggleHienToCao:) on:NO];
+              [self addRow:scroll title:@"HIỆN BỔ TRỢ" y:170 sel:@selector(toggleHienBoTro:) on:NO];
+              [self addRow:scroll title:@"HACK MAP" y:210 sel:@selector(toggleHackMap:) on:NO];
+              [self addRow:scroll title:@"BYPASS ANTI-CHEAT" y:250 sel:@selector(toggleBypassAC:) on:NO];
+              
+              [self addRow:scroll title:@"Hiện thanh Status Bar" y:310 sel:@selector(toggleBar:) on:self.showBar];
+              [self addRow:scroll title:@"Stream Mode (Ẩn khi quay)" y:350 sel:@selector(toggleStream:) on:self.streamMode];
+
+              UIView *card = [[UIView alloc] initWithFrame:CGRectMake(20, 400, w - 40, 50)];
+              card.backgroundColor = [UIColor colorWithWhite:0.15 alpha:0.7];
+              card.layer.cornerRadius = 10.0;
+              [scroll addSubview:card];
+
+              UILabel *lblAdmin = [[UILabel alloc] initWithFrame:CGRectMake(12, 15, card.bounds.size.width - 24, 20)];
+              lblAdmin.text = @"👑 DEV: FWJZ | TG: @fwjz0";
+              lblAdmin.textColor = [UIColor cyanColor];
+              lblAdmin.font = [UIFont boldSystemFontOfSize:12.5];
+              [card addSubview:lblAdmin];
+
+              UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+              closeBtn.frame = CGRectMake(20, 460, w - 40, 40);
+              closeBtn.backgroundColor = [UIColor colorWithRed:0.9 green:0.2 blue:0.35 alpha:0.9];
+              [closeBtn setTitle:@"ĐÓNG MENU" forState:UIControlStateNormal];
+              [closeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+              closeBtn.titleLabel.font = [UIFont boldSystemFontOfSize:13.5];
+              closeBtn.layer.cornerRadius = 8.0;
+              [closeBtn addTarget:self action:@selector(toggleMenu) forControlEvents:UIControlEventTouchUpInside];
+              [scroll addSubview:closeBtn];
+
+              self.menuWindow.hidden = YES;
+          }
+
+          - (void)addRow:(UIScrollView *)parent title:(NSString *)title y:(CGFloat)y sel:(SEL)sel on:(BOOL)isOn {
+              UILabel *lbl = [[UILabel alloc] initWithFrame:CGRectMake(25, y, 180, 31)];
+              lbl.text = title;
+              lbl.textColor = [UIColor whiteColor];
+              lbl.font = [UIFont systemFontOfSize:12.5];
+              [parent addSubview:lbl];
+
+              UISwitch *sw = [[UISwitch alloc] initWithFrame:CGRectMake(self.menuContainer.bounds.size.width - 75, y, 51, 31)];
+              sw.on = isOn;
+              sw.onTintColor = [UIColor colorWithRed:0.2 green:0.8 blue:0.6 alpha:1.0];
+              [sw addTarget:self action:sel forControlEvents:UIControlEventValueChanged];
+              [parent addSubview:sw];
+          }
+
+          - (void)toggleBar:(UISwitch *)sw {
+              self.showBar = sw.on;
+              self.statusLabel.hidden = !sw.on;
+          }
+
+          - (void)toggleStream:(UISwitch *)sw {
+              self.streamMode = sw.on;
+              [self screenCaptureChanged];
+          }
+
+          - (void)screenCaptureChanged {
+              if (self.streamMode && [UIScreen mainScreen].isCaptured) {
+                  self.overlayWindow.hidden = YES;
+                  self.menuWindow.hidden = YES;
+              } else {
+                  self.overlayWindow.hidden = NO;
+              }
+          }
+
+          - (void)tagChanged:(UITextField *)tf {
+              self.adminTag = tf.text.length > 0 ? tf.text : @"fwjz";
+          }
+
+          - (BOOL)textFieldShouldReturn:(UITextField *)tf {
+              [tf resignFirstResponder];
+              return YES;
+          }
+
+          - (void)toggleMenu {
+              BOOL show = self.menuWindow.hidden;
+              if (show) {
+                  [self.menuWindow makeKeyAndVisible];
+                  self.menuWindow.hidden = NO;
+              } else {
+                  self.menuWindow.hidden = YES;
+                  [self.overlayWindow makeKeyAndVisible];
+              }
+          }
+
+          @end
+
+          __attribute__((constructor)) static void init(void) {
+              dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                  [[FWJZMenuUI shared] setup];
+              });
+          }
+          EOF
+
+      - name: Compile dylib directly with Clang
+        run: |
+          xcrun -sdk iphoneos clang -target arm64-apple-ios14.0 \
+            -dynamiclib -fobjc-arc -Wno-deprecated-declarations \
+            -framework UIKit -framework QuartzCore -framework CoreGraphics \
+            fwjz.m -o fwjz.dylib
+
+      - name: Upload Artifact
+        uses: actions.upload-artifact@v4
+        with:
+          name: fwjz-dylib
+          path: fwjz.dylib
